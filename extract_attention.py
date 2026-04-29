@@ -9,12 +9,10 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from peft import PeftModel
 
-# 消除 tokenizer 警告
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 MAX_LEN = 128
-
-print(f"✅ 初始化成功！当前使用计算设备: {DEVICE}")
 
 # ==========================================
 # 阶段一：基础数据与停用词准备
@@ -35,12 +33,12 @@ def clean_text(text):
 df['clean_text'] = df['Review Text'].apply(clean_text)
 df = df[df['clean_text'] != '']
 
-# 提取所有实际打分为 1星(0) 和 2星(1) 的数据
+# 提取所有实际打分为1星和2星的数据
 bad_reviews_df = df[df['label'].isin([0, 1])]
 all_bad_texts = bad_reviews_df['clean_text'].values
 all_bad_labels = bad_reviews_df['label'].values
 
-print(f"📊 数据库提取完毕。共发现实际差评数据: {len(all_bad_texts)} 条。")
+print(f"实际差评数量: {len(all_bad_texts)} ")
 
 # 准备停用词
 ignore_words = set([
@@ -73,7 +71,7 @@ class TransformerDataset(Dataset):
 # ==========================================
 def extract_trigger_words(model_dir, base_model_name, is_lora, display_name):
     print(f"\n\n{'='*50}")
-    print(f"🔍 开始解析模型: 【{display_name}】")
+    print(f"解析模型: 【{display_name}】")
     print(f"{'='*50}")
     
     tokenizer = AutoTokenizer.from_pretrained(model_dir if not is_lora else base_model_name)
@@ -88,7 +86,6 @@ def extract_trigger_words(model_dir, base_model_name, is_lora, display_name):
     model.eval()
     bad_reviews_trigger_words = []
     
-    print("⏳ 正在开启黑盒，执行词语级注意力映射...")
     with torch.no_grad():
         for batch_idx, batch in enumerate(macro_bad_loader):
             input_ids, attn_mask, labels = batch['input_ids'].to(DEVICE), batch['attention_mask'].to(DEVICE), batch['labels'].to(DEVICE)
@@ -140,14 +137,14 @@ def extract_trigger_words(model_dir, base_model_name, is_lora, display_name):
     word_counts = Counter(bad_reviews_trigger_words)
     top_20 = word_counts.most_common(20)
     
-    print(f"\n💡 【{display_name}】 捕获的核心差评原因 Top 20：")
+    print(f"\n【{display_name}】 捕获的核心差评原因 Top 20：")
     for i, (word, count) in enumerate(top_20):
         print(f"Top {i+1:02} | 靶点词: 【 {word.ljust(6, ' ')} 】 | 拦截频次: {count}")
         
     del model
     torch.cuda.empty_cache()
     
-    return top_20 # 返回 Top 20 列表供后续生成表格
+    return top_20
 
 # ==========================================
 # 阶段三：执行评测并保存为表格
@@ -172,7 +169,6 @@ top20_electra = extract_trigger_words(
 print("\n========== [阶段四] 导出靶点词对比表格 ==========")
 # 3. 整合数据为 DataFrame
 table_data = []
-# 考虑到可能某些极端情况下不足20个词，取两者的最大长度
 max_len = max(len(top20_roberta), len(top20_electra))
 
 for i in range(max_len):
@@ -189,15 +185,13 @@ for i in range(max_len):
 
 df_results = pd.DataFrame(table_data)
 
-# 4. 保存为 Excel 或 CSV
+# 4. 保存结果
 excel_path = "trigger_words_comparison.xlsx"
 csv_path = "trigger_words_comparison.csv"
 
 try:
     df_results.to_excel(excel_path, index=False)
-    print(f"📊 完美！靶点词对比表格已成功汇总至 Excel: 【{excel_path}】")
+    print(f"靶点词对比表格已成功汇总至 Excel: 【{excel_path}】")
 except ImportError:
     df_results.to_csv(csv_path, index=False, encoding='utf-8-sig')
-    print(f"📊 靶点词对比表格已保存为 CSV 文件: 【{csv_path}】 (建议 pip install openpyxl 获得更好的Excel支持)")
-
-print("\n🎉 全量黑盒透视完成！")
+    print(f"靶点词对比表格已保存为 CSV 文件: 【{csv_path}】")
